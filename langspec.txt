@@ -1,0 +1,42 @@
+Atomic Operators:
+
+n, north - go north by 1 movement unit
+e, east - go east by 1 movement unit
+s, south - go south by 1 movement unit
+w, west - go west by 1 movement unit
+dir(x, y) - go in the direction of x, y by 1 movement unit
+
+Loops:
+
+x:expr - repeats execution of expr x times
+x$y:expr - repeats execution of expr x times, substituting index for y
+in expr
+[dat]$y:expr - loops over dat, substituting vals for y
+
+Constructors:
+
+varName = ...
+
+
+
+
+5:(e;4$x:(x:rand))
+
+
+LoopToken(5)
+  CompositeToken
+    MoveToken(e)
+    LoopToken(4, x)
+      LoopToken(x)
+        RandomMoveToken
+
+LoopToken
+  @val
+  @binding
+  @token
+
+  @val.times do |index|
+    @token.applyBinding(@binding, index)
+    @token.do()
+      
+  
