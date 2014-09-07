@@ -118,6 +118,9 @@ class StateManager
     @position = Vector.origin
     @particleSpeed = 0.5
 
+  resetPosition: ->
+    @position = Vector.origin
+
 stateManager = new StateManager()
 
 class Token
@@ -129,10 +132,20 @@ class Token
   applyBinding: (bindingName, val) ->
     @args = _.map(@args, (x) -> if x is bindingName then val else x) if @args
 
+  setString: (stringOverride) ->
+    @stringOverride = stringOverride
+    this
+
+  toString: ->
+    @stringOverride or "token"
+
+  @set: (str, token) ->
+    @tokenMap[str] = token
+
   @get: (str, args) ->
     _.tap(@tokenMap[str], (token) -> token.applyArgs(args))
 
-class LoopToken
+class LoopToken extends Token
   constructor: (@val, @binding, @childToken) ->
 
   # TODO(chris): inherited bindings
@@ -142,7 +155,10 @@ class LoopToken
       @childToken.applyBinding(@binding, index) if @binding
       @childToken.do()
 
-class CompositeToken
+  toString: ->
+    "#{@val}:#{@childToken.toString()}"
+
+class CompositeToken extends Token
   constructor: (@childTokens) ->
 
   # TODO(chris): inherited bindings
@@ -150,6 +166,9 @@ class CompositeToken
   do: ->
     _.forEach @childTokens, (childToken) ->
       childToken.do()
+
+  toString: ->
+    "(#{_.map(@childTokens, (token) -> token.toString()).join(';')})"
 
 class MoveToken extends Token
   constructor: (x, y) ->
@@ -168,6 +187,9 @@ class RandomMoveToken extends MoveToken
     @vector = new Vector(Math.random() - 0.5, Math.random() - 0.5)
     super
 
+  toString: ->
+    'rand'
+
 class SetLengthToken extends Token
   constructor: ->
     @length = 0.5
@@ -175,18 +197,32 @@ class SetLengthToken extends Token
   do: ->
     stateManager.particleSpeed = @args[0]
 
+  toString: ->
+    "len(#{@length})"
+
+class ResetPositionToken extends Token
+  do: ->
+    stateManager.resetPosition()
+
+  toString: ->
+    "resetPosition"
+
 class ResetToken extends Token
   do: ->
     stateManager.reset()
 
+  toString: ->
+    "reset"
+
 Token.tokenMap =
-  n: new MoveToken(0.0, 1.0)
-  e: new MoveToken(1.0, 0.0)
-  s: new MoveToken(0.0, -1.0)
-  w: new MoveToken(-1.0, 0.0)
+  n: new MoveToken(0.0, 1.0).setString('n')
+  e: new MoveToken(1.0, 0.0).setString('e')
+  s: new MoveToken(0.0, -1.0).setString('s')
+  w: new MoveToken(-1.0, 0.0).setString('w')
   rand: new RandomMoveToken()
   len: new SetLengthToken()
   reset: new ResetToken()
+  resetPosition: new ResetPositionToken()
 
 class Segment
   constructor: (segmentString) ->
@@ -223,7 +259,7 @@ getSegments = (codeString) ->
   if currentSegment.length > 0
     segments.push(currentSegment)
 
-  segments
+  _.map segments, (x) -> x.trim()
 
 peelable = (codeString) ->
   codeString = codeString.trim()
@@ -232,7 +268,7 @@ peelable = (codeString) ->
   indexOfFirstParen is 0 and indexOfLastParen is codeString.length - 1
 
 peel = (codeString) ->
-  codeString.slice(0, codeString.length)
+  codeString.slice(1, codeString.length - 1)
 
 getInnerSegments = (codeString) ->
   # getSegments(codeString) should have length 1
@@ -242,27 +278,34 @@ getInnerSegments = (codeString) ->
 
   innerCodeString = codeString.slice(indexOfFirstParen + 1, indexOfLastParen)
 
-"(a)"
-"(a;5:(c;d))"
+getSimpleToken = (singleSegmentString) ->
 
+# assumes segmentString is trimmed
 getToken = (segmentString) ->
   # first we check if it has subsegments - if it does then we form a
   # composite by recursively mapping getToken over those segments
-  
+  if peelable(segmentString)
+    innerString = peel(segmentString)
+    segments = getSegments(innerString)
 
-  # if it doesn't have subsegments then we see if it's a loop, etc.
-  segmentParts = segmentString.split(":")
-  if segmentParts[1]?
-    # we have a loop!
-    loopVal = segmentParts[0].trim()
-    rest = segmentParts[1..].join('')
-    val = parseInt(loopVal.split("$")[0])
-    binding = loopVal.split("$")[1]
-    new LoopToken(val, binding, getToken(rest))
+    if segments.length is 1
+      getToken(_.first(segments))
+    else
+      new CompositeToken(_.map(segments, (segment) -> getToken(segment)))
   else
-    # no loop :(
-    segment = new Segment(segmentString)
-    Token.get(segment.tokenString(), segment.args())
+    # if it doesn't have subsegments then we see if it's a loop, etc.
+    segmentParts = segmentString.split(":")
+    if segmentParts[1]?
+      # we have a loop!
+      loopVal = segmentParts[0].trim()
+      rest = segmentParts[1..].join(':')
+      val = parseInt(loopVal.split("$")[0])
+      binding = loopVal.split("$")[1]
+      new LoopToken(val, binding, getToken(rest))
+    else
+      # no loop :(
+      segment = new Segment(segmentString)
+      Token.get(segment.tokenString(), segment.args())
 
 $(document).ready ->
   initGL()
@@ -272,11 +315,31 @@ $(document).ready ->
   $('#prompt').keypress (event) ->
     if event.keyCode is 13
       promptText = $('#prompt').val()
-      segmentStrings = _.map getSegments(promptText), (x) -> x.trim()
-      initScene()
-      stateManager.reset()
-      _.forEach segmentStrings, (segmentString) ->
-        getToken(segmentString).do()
+
+      assignmentParts = promptText.split("=")
+      if assignmentParts[1]?
+        # we have an assignment
+        varName = assignmentParts[0].trim()
+        codeText = assignmentParts[1].trim()
+        segmentStrings = getSegments(codeText)
+        codeToken = new CompositeToken(_.map(segmentStrings, (segment) -> getToken(segment)))
+        Token.set(varName, codeToken)
+        initScene()
+        stateManager.reset()
+        codeToken.do()
+      else
+        segmentStrings = getSegments(promptText)
+        initScene()
+        stateManager.reset()
+        _.forEach segmentStrings, (segmentString) ->
+          getToken(segmentString).do()
+      
+      # update display of commands
+      $('#sidebar').html('')
+      _.forEach Token.tokenMap, (val, key) ->
+        displayString = "#{key}: #{val.toString()}"
+        $('#sidebar').append("<div>#{displayString}</div>")
+
 
 # Segment test
 # s = new Segment("  yo(  1,2 ,3 ) ")
@@ -303,3 +366,6 @@ $(document).ready ->
 # veryComplexString = "something (with;nested);[(expres;sio;ns)];end;([([([(([;;;]))])])]) segment"
 # console.log(veryComplexString)
 # console.log(getSegments(veryComplexString))
+#
+
+getToken("5:(7:rand;e;n;s;w;reset)")

@@ -1,11 +1,21 @@
+#content {
+  float: left;
+}
+
 canvas {
   width: 500px;
   height: 500px;
   margin: 10px 0 0 10px;
+  display: block;
 }
 
 #prompt {
   margin: 10px 0 0 10px;
   padding: 0;
   width: 496px;
+  display: block;
+}
+
+#sidebar {
+  float: left;
 }
